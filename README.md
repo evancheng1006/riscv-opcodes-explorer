@@ -1,6 +1,8 @@
 # Intro
 Explore unused Risc V space using this tool.
 
+Usage: Open _explorer.html_ in the browser (need _instr_dict.js_ in the same folder as _explorer.html_).
+
 Data taken from https://github.com/riscv/riscv-opcodes/
 
 Running __make__ command under the root folder of the riscv-opcodes repo generates _instr_dict.yaml_
