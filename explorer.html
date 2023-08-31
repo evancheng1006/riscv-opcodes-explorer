@@ -1,0 +1,251 @@
+<html>
+    <header>
+        <style>
+            th {
+                vertical-align: top;
+                text-align: left;
+            }
+        </style>
+    </header>
+    <body>
+        <table>
+            <tr>
+                <th id="example_input_bottons">
+                    Input: <br>
+                    <input type="text" id="search_str" value="-----**------------------*****11" required minlength="1" maxlength="64" size="66"/> <br>
+                    <input type="checkbox" id="use_unratified_checkbox" checked/> Include unratified extensions <br>
+                    Example search pattern: <br>
+                    -----**------------------*****11 <br>
+                    00000000100100001111-----1110*** <br>
+                    *****000100100001111-----1110011 <br>
+                    ****000----------000-----0110011 <br>
+                    Debug Output: <br>
+                    <text id="debug_output"></text>
+                </th>
+                <th>
+                    <button id="run" onclick="run();">Run!</button>
+                </th>
+                <th>
+                    Instructions that have no conflict with the dictionary:<br>
+                    <table id="output_no_conflict"></table><br>
+                    Conflicts (first conflict in dict for every conflicted instruction):<br>
+                    <table id="output_conflicts"></table><br>
+                </th>
+            </tr>
+        </table>
+    </body>
+</html>
+<script src="instr_dict.js"></script>
+<script>
+function *foo(pp) {
+    let i = 0;
+    while (i < pp) {
+        yield i;
+        i++;
+    }
+}
+
+function *instr_generator(search_str) {
+    let has_wildcard = false;
+    for (let i = 0; i < search_str.length; i++) {
+        if (search_str.charAt(i) === '*') {
+            has_wildcard = true;
+            let s0 = search_str.substring(0,i) + '0' + search_str.substring(i+1);
+            let s1 = search_str.substring(0,i) + '1' + search_str.substring(i+1);
+            const next_gen0 = instr_generator(s0);
+            const next_gen1 = instr_generator(s1);
+            let next_gen;
+            while (next_gen = next_gen0.next().value, typeof next_gen !== 'undefined') {
+                yield next_gen;
+            }
+            while (next_gen = next_gen1.next().value, typeof next_gen !== 'undefined') {
+                yield next_gen;
+            }
+            break;
+        }
+    }
+    if (!has_wildcard) {
+        yield search_str;
+    }
+}
+
+function get_major_opcode(lsb7) {
+    const major_opcode_dict = {"10000":"MADD","10001":"MSUB","10010":"NMSUB","10011":"NMADD","10100":"OP-FP","10101":"reserved(1010111)","10110":"custom-2/rv128","10111":"48b(1011111)","11000":"BRANCH","11001":"JALR","11010":"reserved(1101011)","11011":"JAL","11100":"SYSTEM","11101":"reserved(1110111)","11110":"custom-3/rv128","11111":">=80b(1111111)","00000":"LOAD","00001":"LOAD-FP","00010":"custom-0","00011":"MISC-MEM","00100":"OP-IMM","00101":"AUIPC","00110":"OP-IMM-32","00111":"48b(0011111)","01000":"STORE","01001":"STORE-FP","01010":"custom-1","01011":"AMO","01100":"OP","01101":"LUI","01110":"OP-32","01111":"64b(0111111)"};
+    if (lsb7.substring(lsb7.length-2) !== "11") {
+        return "compressed";
+    }
+    return major_opcode_dict[lsb7.substring(0,lsb7.length-2)];
+}
+
+function get_major_opcodes(instr) {
+    let lsb7_search_str_raw = instr.substring(instr.length-7);
+    let lsb7_search_str = lsb7_search_str_raw.replaceAll('-','*');
+    const lsb7s = instr_generator(lsb7_search_str);
+    let lsb7;
+    let ops_arr = [];
+    while (lsb7 = lsb7s.next().value, typeof lsb7 !== 'undefined') {
+        ops_arr.push(get_major_opcode(lsb7));
+    }
+    let ret_str = ops_arr.join(';');
+    return ret_str;
+}
+
+function instr_conflict_instr(instr_a, instr_b) {
+    for (let i = 0; i < instr_a.length; i++) {
+        let a_char = instr_a.charAt(i);
+        let b_char = instr_b.charAt(i);
+        if ((a_char !== '-') && (b_char !== '-')) {
+            if (a_char !== b_char) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+function instr_conflict_dict(instr_a, instr_dict) {
+    for (const k in instr_dict) {
+        instr_b = instr_dict[k]["encoding"];
+        if (instr_conflict_instr(instr_a, instr_b)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function instr_first_conflict_dict(instr_a, instr_dict) {
+    for (const k in instr_dict) {
+        instr_b = instr_dict[k]["encoding"];
+        if (instr_conflict_instr(instr_a, instr_b)) {
+            return k;
+        }
+    }
+    return; // empty
+}
+
+function instr_all_conflict_dict(instr_a, instr_dict) {
+    let ret_arr = [];
+    for (const k in instr_dict) {
+        instr_b = instr_dict[k]["encoding"];
+        if (instr_conflict_instr(instr_a, instr_b)) {
+            ret_arr.push(k);
+        }
+    }
+    return ret_arr; // empty
+}
+
+function run_no_conflict(search_str, instr_dict, output_handle, debug_output_handle) {
+    let table_body = document.createElement("tbody");
+    // header
+    const header_row = document.createElement("tr");
+    const field_names = ["Instruction","Major-opcodes"];
+    for (let i = 0; i < field_names.length; i++) {
+        let x = field_names[i];
+        const field_cell = document.createElement("th");
+        const field_cell_text = document.createTextNode(x);
+        field_cell.appendChild(field_cell_text);
+        header_row.appendChild(field_cell);
+    }
+    table_body.appendChild(header_row);
+
+    const instrs = instr_generator(search_str);
+    let instr;
+    while (instr = instrs.next().value, typeof instr !== 'undefined') {
+        if (!instr_conflict_dict(instr, instr_dict)) {
+            const tmp_row = document.createElement("tr");
+            const tmp_row_data = [instr, get_major_opcodes(instr)];
+            for (let j = 0; j < tmp_row_data.length; j++) {
+                const cell = document.createElement("td");
+                const cell_text = document.createTextNode(tmp_row_data[j]);
+                cell.appendChild(cell_text);
+                tmp_row.appendChild(cell);
+            }
+            table_body.appendChild(tmp_row);
+        }
+    }
+
+    while (output_handle.firstChild) {
+        output_handle.removeChild(output_handle.firstChild);
+    }
+    output_handle.appendChild(table_body);
+}
+
+function run_conflicts(search_str, instr_dict, output_handle, debug_output_handle) {
+    // only show the first conflict
+    let table_body = document.createElement("tbody");
+    // header
+    const header_row = document.createElement("tr");
+    const field_names = ["Instruction","Major-opcodes", "Instr in dict", "Name", "Ext"];
+    for (let i = 0; i < field_names.length; i++) {
+        let x = field_names[i];
+        const field_cell = document.createElement("th");
+        const field_cell_text = document.createTextNode(x);
+        field_cell.appendChild(field_cell_text);
+        header_row.appendChild(field_cell);
+    }
+    table_body.appendChild(header_row);
+
+    const instrs = instr_generator(search_str);
+    let instr;
+    while (instr = instrs.next().value, typeof instr !== 'undefined') {
+        if (instr_conflict_dict(instr, instr_dict)) {
+            const instr_b_name = instr_first_conflict_dict(instr, instr_dict);
+            const instr_b = instr_dict[instr_b_name]['encoding'];
+            const instr_b_ext = instr_dict[instr_b_name]['extension'];
+            const tmp_row = document.createElement("tr");
+            const tmp_row_data = [instr, get_major_opcodes(instr), instr_b, instr_b_name, instr_b_ext];
+            for (let j = 0; j < tmp_row_data.length; j++) {
+                const cell = document.createElement("td");
+                const cell_text = document.createTextNode(tmp_row_data[j]);
+                cell.appendChild(cell_text);
+                tmp_row.appendChild(cell);
+            }
+            table_body.appendChild(tmp_row);
+        }
+    }
+
+    while (output_handle.firstChild) {
+        output_handle.removeChild(output_handle.firstChild);
+    }
+    output_handle.appendChild(table_body);
+}
+
+function check_input(search_str, debug_output_handle) {
+    if (search_str.length != 32) {
+        debug_output_handle.innerHTML += "Error: search string length is " + search_str.length.toString() + ", but the length should be 32";
+        return false;
+    }
+    const search_str_accepted_chars = ["0", "1", "-", "*"];;
+    for (let i = 0; i < search_str.length; i++) {
+        let tmp_char = search_str.charAt(i);
+        if (!search_str_accepted_chars.includes(tmp_char)) {
+            debug_output_handle.innerHTML += "Error: invalid character '" + tmp_char + "' in search string. Accepted chars = ['0','1','-','*']";
+            return false;
+        }
+    }
+    return true;
+}
+
+
+function run() {
+    let use_unratified = document.getElementById("use_unratified_checkbox").checked;
+    let instr_dict;
+    if (use_unratified) {
+        instr_dict = instr_dict_all;
+    } else {
+        instr_dict = instr_dict_ratified_only;
+    }
+    let search_str = document.getElementById("search_str").value;
+
+    let debug_output_handle = document.getElementById("debug_output");
+    debug_output_handle.innerHTML = "";
+    let output_no_conflict_handle = document.getElementById("output_no_conflict");
+    let output_conflicts_handle = document.getElementById("output_conflicts");
+    let input_valid = check_input(search_str, debug_output_handle);
+    if (input_valid) {
+        run_no_conflict(search_str, instr_dict, output_no_conflict_handle, debug_output_handle);
+        run_conflicts(search_str, instr_dict, output_conflicts_handle, debug_output_handle);
+    }
+}
+run();
+</script>
